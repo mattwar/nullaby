@@ -750,6 +750,81 @@ public class C
         }
 
         [TestMethod]
+        public void TestWhileAssignmentInNullConditionedLoop()
+        {
+            var code =
+@"
+public class C
+{
+  private bool p;
+
+  public int M([CouldBeNull] string x)
+  {
+    while (x == null)
+    {
+       x = ""value"";
+    }
+
+    return x.Length;
+  }
+}
+";
+            var dx = GetAnalyzerDiagnostics(code);
+            Assert.AreEqual(0, dx.Length);
+        }
+
+        [TestMethod]
+        public void TestWhileAssignmentInLoopBeforeBreak()
+        {
+            var code =
+@"
+public class C
+{
+  private bool p;
+
+  public int M([CouldBeNull] string x)
+  {
+    while (x == null)
+    {
+       x = ""value"";
+       if (p) break;
+    }
+
+    return x.Length;
+  }
+}
+";
+            var dx = GetAnalyzerDiagnostics(code);
+            Assert.AreEqual(0, dx.Length);
+        }
+
+        [TestMethod]
+        public void TestWhileAssignmentInLoopAfterBreak()
+        {
+            var code =
+@"
+public class C
+{
+  private bool p;
+
+  public int M([CouldBeNull] string x)
+  {
+    while (x == null)
+    {
+       if (p) break;
+       x = ""value"";
+    }
+
+    return x.Length;
+  }
+}
+";
+            var dx = GetAnalyzerDiagnostics(code);
+            Assert.AreEqual(1, dx.Length);
+            Assert.AreEqual(NullAnalyzer.PossibleNullDeferenceId, dx[0].Id);
+        }
+
+        [TestMethod]
         public void TestFieldExpressionAcquiresNullState()
         {
             var code =

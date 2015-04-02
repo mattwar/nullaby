@@ -86,6 +86,11 @@ namespace Nullaby
             // used to track observed null states lexically 
             private ImmutableDictionary<object, NullState> states;
 
+            // use to remember states for goto/continue
+            private ImmutableList<ImmutableDictionary<object, NullState>> exitStates;
+            private static ImmutableList<ImmutableDictionary<object, NullState>> emptyList
+                = ImmutableList<ImmutableDictionary<object, NullState>>.Empty;
+
             private enum NullState
             {
                 Unknown,
@@ -102,6 +107,7 @@ namespace Nullaby
                 this.context = context;
                 this.empty = ImmutableDictionary.Create<object, NullState>(new VariableComparer(this));
                 this.states = empty;
+                this.exitStates = emptyList;
             }
 
             public void Analyze(SyntaxNode node)
@@ -367,6 +373,7 @@ namespace Nullaby
             public override void VisitWhileStatement(WhileStatementSyntax node)
             {
                 var initialStates = this.states;
+                var oldExits = this.exitStates;
 
                 this.Visit(node.Condition);
 
@@ -375,10 +382,13 @@ namespace Nullaby
 
                 // body of loop is evaluated if condition is true
                 this.states = trueBranch;
+                this.exitStates = emptyList;
                 this.Visit(node.Statement);
 
                 var loopEnd = this.states;
-                this.states = Join(initialStates, falseBranch, loopEnd);
+                var loopExits = this.exitStates.Add(loopEnd);
+                var loopJoinedExits = Join(initialStates, loopExits);
+                this.states = Join(initialStates, falseBranch, loopJoinedExits);
 
                 if (!BranchesOut(node.Statement))
                 {
@@ -386,6 +396,14 @@ namespace Nullaby
                     // regardless what happened inside the loop, so add it back.
                     this.states = AddChanges(initialStates, falseBranch, this.states);
                 }
+
+                this.exitStates = oldExits;
+            }
+
+            public override void VisitBreakStatement(BreakStatementSyntax node)
+            {
+                base.VisitBreakStatement(node);
+                this.exitStates = this.exitStates.Add(this.states);
             }
 
             private bool Exits(StatementSyntax statement)
@@ -765,6 +783,19 @@ namespace Nullaby
                 Join(original, branchA, branchB, ref joined);
                 Join(original, branchB, branchA, ref joined);
                 return RealizeChanges(original, joined);
+            }
+
+            private ImmutableDictionary<object, NullState> Join(
+                ImmutableDictionary<object, NullState> original,
+                ImmutableList<ImmutableDictionary<object, NullState>> branches)
+            {
+                var joined = branches[0];
+                for (int i = 1; i < branches.Count; i++)
+                {
+                    joined = Join(original, joined, branches[i]);
+                }
+
+                return joined;
             }
 
             private void Join(
