@@ -335,13 +335,13 @@ namespace Nullaby
 
                 this.states = trueBranch;
                 this.Visit(node.Statement);
-                trueBranch = this.states; 
+                trueBranch = this.states;
 
                 if (node.Else != null)
                 {
                     this.states = falseBranch;
                     this.Visit(node.Else);
-                    falseBranch = this.states; 
+                    falseBranch = this.states;
                 }
 
                 if (!Exits(node.Statement))
@@ -458,16 +458,18 @@ namespace Nullaby
 
             private void VisitEquality(BinaryExpressionSyntax binop)
             {
+                base.VisitBinaryExpression(binop);
+
                 ExpressionSyntax influencedExpr = null;
 
                 var leftState = GetNullState(binop.Left);
                 var rightState = GetNullState(binop.Right);
 
-                if (leftState == NullState.Null && rightState != NullState.Null)
+                if (IsKnownToBeNull(leftState) && !IsKnownToBeNull(rightState))
                 {
                     influencedExpr = binop.Right;
                 }
-                else if (rightState == NullState.Null && leftState != NullState.Null)
+                else if (IsKnownToBeNull(rightState) && !IsKnownToBeNull(leftState))
                 {
                     influencedExpr = binop.Left;
                 }
@@ -487,14 +489,56 @@ namespace Nullaby
                             break;
                     }
                 }
+            }
 
-                base.VisitBinaryExpression(binop);
+            private static bool IsKnownToBeNull(NullState state)
+            {
+                switch (state)
+                {
+                    case NullState.Null:
+                    case NullState.TestedNull:
+                        return true;
+                    default:
+                        return false;
+                }
             }
 
             private void SetNullState(ExpressionSyntax expr, NullState state)
             {
+                expr = GetTrackableExpression(expr);
+                if (expr != null)
+                {
+                    this.states = this.states.SetItem(expr, state);
+                }
+            }
+
+            /// <summary>
+            /// Returns the portion of the expression that represents the variable
+            /// that can be tracked, or null if the expression is not trackable.
+            /// </summary>
+            private ExpressionSyntax GetTrackableExpression(ExpressionSyntax expr)
+            {
                 expr = WithoutParens(expr);
-                this.states = this.states.SetItem(expr, state);
+
+                switch (expr.Kind())
+                {
+                    // assignment expressions yield their LHS variable for tracking
+                    // this comes into play during null checks: (x = y) != null
+                    // in this case x can be assigned tested-not-null state.. (what about y?)
+                    case SyntaxKind.SimpleAssignmentExpression:
+                        return GetTrackableExpression(((BinaryExpressionSyntax)expr).Left);
+
+                    // all dotted names are trackable.
+                    case SyntaxKind.SimpleMemberAccessExpression:
+                    case SyntaxKind.PointerMemberAccessExpression:
+                    case SyntaxKind.QualifiedName:
+                    case SyntaxKind.IdentifierName:
+                    case SyntaxKind.AliasQualifiedName:
+                        return expr;
+
+                    default:
+                        return null;
+                }
             }
 
             private ExpressionSyntax WithoutParens(ExpressionSyntax expr)

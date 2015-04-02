@@ -161,6 +161,26 @@ public class C
         }
 
         [TestMethod]
+        public void TestDereferenceWithAssignmentTestedNotNull()
+        {
+            var code =
+@"
+public class C
+{
+  public void M([CouldBeNull] string x, [CouldBeNull] string y)
+  {    
+     if ((x = y) != null)
+     {
+        var n = x.Length;
+     }
+  }
+}
+";
+            var dx = GetAnalyzerDiagnostics(code);
+            Assert.AreEqual(0, dx.Length);
+        }
+
+        [TestMethod]
         public void TestDereferenceOnKnownNullLocal()
         {
             var code =
