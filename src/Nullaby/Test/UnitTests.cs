@@ -825,6 +825,77 @@ public class C
         }
 
         [TestMethod]
+        public void TestGotoBranchForward()
+        {
+            var code =
+@"
+public class C
+{
+  public int M([CouldBeNull] string x)
+  {
+    if (x == null)
+    {
+       x = ""something"";
+       goto label;
+    }
+
+  label:
+    return x.Length;
+  }
+}
+";
+            var dx = GetAnalyzerDiagnostics(code);
+            Assert.AreEqual(0, dx.Length);
+        }
+
+        [TestMethod]
+        public void TestGotoBranchBackward()
+        {
+            var code =
+@"
+public class C
+{
+  public int M([CouldBeNull] string x)
+  {
+    label:
+
+    if (x == null)
+    {
+       x = ""something"";
+       goto label;
+    }
+
+    return x.Length;
+  }
+}
+";
+            var dx = GetAnalyzerDiagnostics(code);
+            Assert.AreEqual(0, dx.Length);
+        }
+
+        [TestMethod]
+        public void TestGotoBranchBackwardNullAssignment()
+        {
+            var code =
+@"
+public class C
+{
+  public void M()
+  {
+    var x = ""something"";
+    label:
+    var n = x.Length;
+    x = null;
+    goto label;
+  }
+}
+";
+            var dx = GetAnalyzerDiagnostics(code);
+            Assert.AreEqual(1, dx.Length);
+            Assert.AreEqual(NullAnalyzer.PossibleNullDeferenceId, dx[0].Id);
+        }
+
+        [TestMethod]
         public void TestFieldExpressionAcquiresNullState()
         {
             var code =

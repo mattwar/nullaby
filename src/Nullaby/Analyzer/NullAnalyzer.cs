@@ -86,10 +86,16 @@ namespace Nullaby
             // used to track observed null states lexically 
             private ImmutableDictionary<object, NullState> states;
 
-            // use to remember states for goto/continue
+            // use to remember states for break style exits that branch to end of statement/etc
             private ImmutableList<ImmutableDictionary<object, NullState>> exitStates;
-            private static ImmutableList<ImmutableDictionary<object, NullState>> emptyList
+
+            private static ImmutableList<ImmutableDictionary<object, NullState>> emptyExitStates
                 = ImmutableList<ImmutableDictionary<object, NullState>>.Empty;
+
+            private ImmutableDictionary<string, ImmutableDictionary<object, NullState>> branchPoints
+                = ImmutableDictionary<string, ImmutableDictionary<object, NullState>>.Empty;
+
+            private bool reportDiagnostics;
 
             private enum NullState
             {
@@ -107,7 +113,7 @@ namespace Nullaby
                 this.context = context;
                 this.empty = ImmutableDictionary.Create<object, NullState>(new VariableComparer(this));
                 this.states = empty;
-                this.exitStates = emptyList;
+                this.exitStates = emptyExitStates;
             }
 
             public void Analyze(SyntaxNode node)
@@ -127,11 +133,37 @@ namespace Nullaby
                     }
                 }
 
+                // do initial visit to find branch points
+                this.DoAnalysisPass(node);
+
+                // if we have branch points, repeat visits until we have reached steady-state
+                int revists = 0;
+                while (this.branchPoints.Count > 0)
+                {
+                    var lastBranchPoints = this.branchPoints;
+                    this.DoAnalysisPass(node);
+                    if (lastBranchPoints == this.branchPoints || (revists++) < 10)
+                    {
+                        break;
+                    }
+                }
+
+                // one more time to report diagnostics
+                this.reportDiagnostics = true;
+                this.DoAnalysisPass(node);
+            }
+
+            private void DoAnalysisPass(SyntaxNode node)
+            {
+                this.states = this.empty;
+                this.exitStates = emptyExitStates;
                 this.Visit(node);
             }
 
             public override void VisitVariableDeclarator(VariableDeclaratorSyntax node)
             {
+                base.VisitVariableDeclarator(node);
+
                 if (node.Initializer != null)
                 {
                     var symbol = context.SemanticModel.GetDeclaredSymbol(node);
@@ -139,17 +171,13 @@ namespace Nullaby
                     {
                         CheckAssignment(symbol, node.Initializer.Value);
                     }
-
-                    this.Visit(node.Initializer.Value);
-                }
-                else
-                {
-                    base.VisitVariableDeclarator(node);
                 }
             }
 
             public override void VisitEqualsValueClause(EqualsValueClauseSyntax node)
             {
+                base.VisitEqualsValueClause(node);
+
                 if (node.Parent != null && node.Parent.IsKind(SyntaxKind.PropertyDeclaration))
                 {
                     var symbol = context.SemanticModel.GetDeclaredSymbol((PropertyDeclarationSyntax)node.Parent);
@@ -157,10 +185,6 @@ namespace Nullaby
                     {
                         CheckAssignment(symbol, node.Value);
                     }
-                }
-                else
-                {
-                    base.VisitEqualsValueClause(node);
                 }
             }
 
@@ -200,24 +224,27 @@ namespace Nullaby
 
             public override void VisitMemberAccessExpression(MemberAccessExpressionSyntax node)
             {
-                switch (GetNullState(node.Expression))
-                {
-                    case NullState.Null:
-                    case NullState.TestedNull:
-                        context.ReportDiagnostic(Diagnostic.Create(NullDeference, node.Name.GetLocation()));
-                        break;
-                    case NullState.CouldBeNull:
-                        context.ReportDiagnostic(Diagnostic.Create(PossibleNullDereference, node.Name.GetLocation()));
-                        break;
-                }
-
                 base.VisitMemberAccessExpression(node);
+
+                if (reportDiagnostics)
+                {
+                    switch (GetNullState(node.Expression))
+                    {
+                        case NullState.Null:
+                        case NullState.TestedNull:
+                            context.ReportDiagnostic(Diagnostic.Create(NullDeference, node.Name.GetLocation()));
+                            break;
+                        case NullState.CouldBeNull:
+                            context.ReportDiagnostic(Diagnostic.Create(PossibleNullDereference, node.Name.GetLocation()));
+                            break;
+                    }
+                }
             }
 
             public override void VisitAssignmentExpression(AssignmentExpressionSyntax node)
             {
-                CheckAssignment(node.Left, node.Right);
                 base.VisitAssignmentExpression(node);
+                CheckAssignment(node.Left, node.Right);
             }
 
             private void CheckAssignment(ExpressionSyntax variable, ExpressionSyntax expression)
@@ -236,7 +263,7 @@ namespace Nullaby
 
             private void CheckAssignment(NullState variableState, NullState expressionState, ExpressionSyntax expression)
             {
-                if (variableState == NullState.ShouldNotBeNull)
+                if (reportDiagnostics && variableState == NullState.ShouldNotBeNull)
                 {
                     switch (expressionState)
                     {
@@ -268,41 +295,41 @@ namespace Nullaby
 
             public override void VisitInvocationExpression(InvocationExpressionSyntax node)
             {
+                base.VisitInvocationExpression(node);
+
                 var method = context.SemanticModel.GetSymbolInfo(node).Symbol as IMethodSymbol;
                 if (method != null)
                 {
                     CheckArguments(node.ArgumentList.Arguments, method.Parameters);
                 }
-
-                base.VisitInvocationExpression(node);
             }
 
             public override void VisitObjectCreationExpression(ObjectCreationExpressionSyntax node)
             {
+                base.VisitObjectCreationExpression(node);
+
                 var method = context.SemanticModel.GetSymbolInfo(node).Symbol as IMethodSymbol;
                 if (method != null)
                 {
                     CheckArguments(node.ArgumentList.Arguments, method.Parameters);
                 }
-
-                base.VisitObjectCreationExpression(node);
             }
 
             public override void VisitConstructorInitializer(ConstructorInitializerSyntax node)
             {
+                base.VisitConstructorInitializer(node);
+
                 var method = context.SemanticModel.GetSymbolInfo(node).Symbol as IMethodSymbol;
                 if (method != null)
                 {
                     CheckArguments(node.ArgumentList.Arguments, method.Parameters);
                 }
-
-                base.VisitConstructorInitializer(node);
             }
 
             private void CheckArguments(SeparatedSyntaxList<ArgumentSyntax> arguments, ImmutableArray<IParameterSymbol> parameters)
             {
                 // check parameter assignments from arguments
-                if (arguments.Count <= parameters.Length)
+                if (reportDiagnostics && arguments.Count <= parameters.Length)
                 {
                     for (int i = 0; i < parameters.Length; i++)
                     {
@@ -313,6 +340,8 @@ namespace Nullaby
 
             public override void VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node)
             {
+                base.VisitLocalDeclarationStatement(node);
+
                 // local variables acquire state from initializer
                 foreach (var v in node.Declaration.Variables)
                 {
@@ -326,8 +355,6 @@ namespace Nullaby
                         }
                     }
                 }
-
-                base.VisitLocalDeclarationStatement(node);
             }
 
             public override void VisitIfStatement(IfStatementSyntax node)
@@ -382,7 +409,7 @@ namespace Nullaby
 
                 // body of loop is evaluated if condition is true
                 this.states = trueBranch;
-                this.exitStates = emptyList;
+                this.exitStates = emptyExitStates;
                 this.Visit(node.Statement);
 
                 var loopEnd = this.states;
@@ -404,6 +431,41 @@ namespace Nullaby
             {
                 base.VisitBreakStatement(node);
                 this.exitStates = this.exitStates.Add(this.states);
+            }
+
+            public override void VisitLabeledStatement(LabeledStatementSyntax node)
+            {
+                // join incoming branch states into the lexical state
+                var labelName = node.Identifier.ValueText;
+                ImmutableDictionary<object, NullState> labelState;
+                if (branchPoints.TryGetValue(labelName, out labelState))
+                {
+                    this.states = Join(this.states, this.states, labelState);
+                }
+
+                base.VisitLabeledStatement(node);
+            }
+
+            public override void VisitGotoStatement(GotoStatementSyntax node)
+            {
+                // join branch point's state with current state
+                if (node.CaseOrDefaultKeyword == default(SyntaxToken) 
+                    && node.Expression.IsKind(SyntaxKind.IdentifierName))
+                {
+                    var labelName = ((IdentifierNameSyntax)node.Expression).Identifier.ValueText;
+                    ImmutableDictionary<object, NullState> labelState = this.empty;
+                    if (this.branchPoints.TryGetValue(labelName, out labelState))
+                    {
+                        var joined = Join(labelState, labelState, this.states);
+                        this.branchPoints = this.branchPoints.SetItem(labelName, joined);
+                    }
+                    else
+                    {
+                        this.branchPoints = this.branchPoints.SetItem(labelName, this.states);
+                    }
+                }
+
+                base.VisitGotoStatement(node);
             }
 
             private bool Exits(StatementSyntax statement)
