@@ -612,7 +612,7 @@ public class C
         }
 
         [TestMethod]
-        public void TestEmptyIfOnUnknownNullState()
+        public void TestUnknownPromotedToKnownStateIfTestedAgainstNull()
         {
             var code =
 @"
@@ -629,7 +629,7 @@ public class C
 }
 ";
             var dx = GetAnalyzerDiagnostics(code);
-            Assert.AreEqual(0, dx.Length);
+            Assert.AreEqual(NullAnalyzer.PossibleNullDeferenceId, dx[0].Id);
         }
 
         [TestMethod]
@@ -1065,57 +1065,6 @@ public class C
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
             Assert.AreEqual(NullAnalyzer.PossibleNullAssignmentId, dx[0].Id);
-        }
-
-        [TestMethod]
-        public void TestNullVariableWorksAsNullTest()
-        {
-            var code =
-@"
-public class C
-{
-  public void M()
-  {
-    string x = null;
-    string y;
-
-    if (y == x)
-    {
-        var z = y.Length;
-    }
-  }
-}
-";
-            var dx = GetAnalyzerDiagnostics(code);
-            Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullDeferenceId, dx[0].Id);
-        }
-
-        [TestMethod]
-        public void TestNullVariableWorksAsNullTestInElse()
-        {
-            var code =
-@"
-public class C
-{
-  public void M()
-  {
-    string x = null;
-    string y;
-
-    if (y != x)
-    {
-    }
-    else 
-    {
-        var z = y.Length;
-    }
-  }
-}
-";
-            var dx = GetAnalyzerDiagnostics(code);
-            Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullDeferenceId, dx[0].Id);
         }
 
         [TestMethod]

@@ -24,7 +24,7 @@ namespace Nullaby
                 title: "Null dereference",
                 messageFormat: "Dereference of null value",
                 category: "Nulls",
-                defaultSeverity: DiagnosticSeverity.Error,
+                defaultSeverity: DiagnosticSeverity.Warning,
                 isEnabledByDefault: true);
 
         internal static DiagnosticDescriptor PossibleNullDereference =
@@ -33,25 +33,25 @@ namespace Nullaby
                 title: "Possible null deference",
                 messageFormat: "Possible dereference of null value",
                 category: "Nulls",
-                defaultSeverity: DiagnosticSeverity.Error,
+                defaultSeverity: DiagnosticSeverity.Warning,
                 isEnabledByDefault: true);
 
         internal static DiagnosticDescriptor NullAssignment =
            new DiagnosticDescriptor(
                 id: NullAssignmentId,
                 title: "Null assignment",
-                messageFormat: "Assignment of null to not-null variable XXX",
+                messageFormat: "Assignment of null to variable that should not be null",
                 category: "Nulls",
-                defaultSeverity: DiagnosticSeverity.Error,
+                defaultSeverity: DiagnosticSeverity.Warning,
                 isEnabledByDefault: true);
 
         internal static DiagnosticDescriptor PossibleNullAssignment =
            new DiagnosticDescriptor(
                 id: PossibleNullAssignmentId,
                 title: "Possible null assignment",
-                messageFormat: "Possible assignment of null to not-null variable",
+                messageFormat: "Possible assignment of null to variable that should not be null.",
                 category: "Nulls",
-                defaultSeverity: DiagnosticSeverity.Error,
+                defaultSeverity: DiagnosticSeverity.Warning,
                 isEnabledByDefault: true);
 
         private static readonly ImmutableArray<DiagnosticDescriptor> s_supported =
@@ -84,26 +84,24 @@ namespace Nullaby
             private readonly ImmutableDictionary<object, NullState> empty;
 
             // used to track observed null states lexically 
-            private ImmutableDictionary<object, NullState> states;
+            private ImmutableDictionary<object, NullState> lexicalStates;
 
             // use to remember states for break style exits that branch to end of statement/etc
-            private ImmutableList<ImmutableDictionary<object, NullState>> exitStates;
+            private ImmutableDictionary<object, NullState> exitStates;
 
-            private static ImmutableList<ImmutableDictionary<object, NullState>> emptyExitStates
-                = ImmutableList<ImmutableDictionary<object, NullState>>.Empty;
-
-            private ImmutableDictionary<string, ImmutableDictionary<object, NullState>> branchPoints
+            // a map from label name to states from incoming branch points (goto statements)
+            private ImmutableDictionary<string, ImmutableDictionary<object, NullState>> incomingStates
                 = ImmutableDictionary<string, ImmutableDictionary<object, NullState>>.Empty;
 
+            // true if the analzyer should report diagnostics on the current pass
             private bool reportDiagnostics;
+
 
             private enum NullState
             {
                 Unknown,
                 Null,
                 NotNull,
-                TestedNull,
-                TestedNotNull,
                 CouldBeNull,
                 ShouldNotBeNull
             }
@@ -112,8 +110,8 @@ namespace Nullaby
             {
                 this.context = context;
                 this.empty = ImmutableDictionary.Create<object, NullState>(new VariableComparer(this));
-                this.states = empty;
-                this.exitStates = emptyExitStates;
+                this.lexicalStates = empty;
+                this.exitStates = empty;
             }
 
             public void Analyze(SyntaxNode node)
@@ -138,11 +136,11 @@ namespace Nullaby
 
                 // if we have branch points, repeat visits until we have reached steady-state
                 int revists = 0;
-                while (this.branchPoints.Count > 0)
+                while (this.incomingStates.Count > 0)
                 {
-                    var lastBranchPoints = this.branchPoints;
+                    var lastIncomingStates = this.incomingStates;
                     this.DoAnalysisPass(node);
-                    if (lastBranchPoints == this.branchPoints || (revists++) < 10)
+                    if (lastIncomingStates == this.incomingStates || (revists++) < 10)
                     {
                         break;
                     }
@@ -155,8 +153,8 @@ namespace Nullaby
 
             private void DoAnalysisPass(SyntaxNode node)
             {
-                this.states = this.empty;
-                this.exitStates = emptyExitStates;
+                this.lexicalStates = this.empty;
+                this.exitStates = this.empty;
                 this.Visit(node);
             }
 
@@ -231,7 +229,6 @@ namespace Nullaby
                     switch (GetNullState(node.Expression))
                     {
                         case NullState.Null:
-                        case NullState.TestedNull:
                             context.ReportDiagnostic(Diagnostic.Create(NullDeference, node.Name.GetLocation()));
                             break;
                         case NullState.CouldBeNull:
@@ -268,7 +265,6 @@ namespace Nullaby
                     switch (expressionState)
                     {
                         case NullState.Null:
-                        case NullState.TestedNull:
                             context.ReportDiagnostic(Diagnostic.Create(NullAssignment, expression.GetLocation()));
                             break;
 
@@ -359,69 +355,66 @@ namespace Nullaby
 
             public override void VisitIfStatement(IfStatementSyntax node)
             {
-                var initialStates = this.states;
+                var initialStates = this.lexicalStates;
 
                 this.Visit(node.Condition);
 
-                var trueBranch = this.states;
+                var trueBranch = this.lexicalStates;
                 var falseBranch = NegateChanges(initialStates, trueBranch);
 
-                this.states = trueBranch;
+                this.lexicalStates = trueBranch;
                 this.Visit(node.Statement);
-                trueBranch = this.states;
+                trueBranch = this.lexicalStates;
 
                 if (node.Else != null)
                 {
-                    this.states = falseBranch;
+                    this.lexicalStates = falseBranch;
                     this.Visit(node.Else);
-                    falseBranch = this.states;
+                    falseBranch = this.lexicalStates;
                 }
 
                 if (!Exits(node.Statement))
                 {
                     // if statement does not exit then false branch states hold after statement
                     // because the only want to reach that point is if the condition was false
-                    this.states = falseBranch;
+                    this.lexicalStates = falseBranch;
                 }
                 else if (node.Else != null && !Exits(node.Else.Statement))
                 {
                     // if else statement does not exit then true branch states hold after statement
                     // because the only way to reach that point is if the condition was true
-                    this.states = trueBranch;
+                    this.lexicalStates = trueBranch;
                 }
                 else
                 {
                     // can't say anything about true/false condition
                     // final state is a join between both branches
-                    this.states = Join(initialStates, trueBranch, falseBranch);
+                    this.lexicalStates = Join(trueBranch, falseBranch);
                 }
             }
 
             public override void VisitWhileStatement(WhileStatementSyntax node)
             {
-                var initialStates = this.states;
+                var initialStates = this.lexicalStates;
                 var oldExits = this.exitStates;
 
                 this.Visit(node.Condition);
 
-                var trueBranch = this.states;
+                var trueBranch = this.lexicalStates;
                 var falseBranch = NegateChanges(initialStates, trueBranch);
 
                 // body of loop is evaluated if condition is true
-                this.states = trueBranch;
-                this.exitStates = emptyExitStates;
+                this.lexicalStates = trueBranch;
+                this.exitStates = this.empty;
                 this.Visit(node.Statement);
 
-                var loopEnd = this.states;
-                var loopExits = this.exitStates.Add(loopEnd);
-                var loopJoinedExits = Join(initialStates, loopExits);
-                this.states = Join(initialStates, falseBranch, loopJoinedExits);
+                this.lexicalStates = Join(falseBranch, Join(this.lexicalStates, this.exitStates));
 
                 if (!BranchesOut(node.Statement))
                 {
                     // if we don't otherwise exit from inside the loop, then the false condition holds at the end
                     // regardless what happened inside the loop, so add it back.
-                    this.states = AddChanges(initialStates, falseBranch, this.states);
+                    this.lexicalStates = AddChanges(initialStates, falseBranch, this.lexicalStates);
                 }
 
                 this.exitStates = oldExits;
@@ -430,17 +423,22 @@ namespace Nullaby
             public override void VisitBreakStatement(BreakStatementSyntax node)
             {
                 base.VisitBreakStatement(node);
-                this.exitStates = this.exitStates.Add(this.states);
+
+                // combine all exit states together
+                // note: don't join if no exit states yet, since empty won't include the loop/branch condition, etc.
+                this.exitStates = this.exitStates == this.empty 
+                    ? this.lexicalStates
+                    : Join(this.exitStates, this.lexicalStates);
             }
 
             public override void VisitLabeledStatement(LabeledStatementSyntax node)
             {
-                // join incoming branch states into the lexical state
+                // join incoming branch states (if they exists) into the lexical state
                 var labelName = node.Identifier.ValueText;
                 ImmutableDictionary<object, NullState> labelState;
-                if (branchPoints.TryGetValue(labelName, out labelState))
+                if (incomingStates.TryGetValue(labelName, out labelState))
                 {
-                    this.states = Join(this.states, this.states, labelState);
+                    this.lexicalStates = Join(this.lexicalStates, labelState);
                 }
 
                 base.VisitLabeledStatement(node);
@@ -448,20 +446,20 @@ namespace Nullaby
 
             public override void VisitGotoStatement(GotoStatementSyntax node)
             {
-                // join branch point's state with current state
+                // join current lexical state to label's external branch states
                 if (node.CaseOrDefaultKeyword == default(SyntaxToken) 
                     && node.Expression.IsKind(SyntaxKind.IdentifierName))
                 {
                     var labelName = ((IdentifierNameSyntax)node.Expression).Identifier.ValueText;
                     ImmutableDictionary<object, NullState> labelState = this.empty;
-                    if (this.branchPoints.TryGetValue(labelName, out labelState))
+                    if (this.incomingStates.TryGetValue(labelName, out labelState))
                     {
-                        var joined = Join(labelState, labelState, this.states);
-                        this.branchPoints = this.branchPoints.SetItem(labelName, joined);
+                        var joined = Join(labelState, this.lexicalStates);
+                        this.incomingStates = this.incomingStates.SetItem(labelName, joined);
                     }
                     else
                     {
-                        this.branchPoints = this.branchPoints.SetItem(labelName, this.states);
+                        this.incomingStates = this.incomingStates.SetItem(labelName, this.lexicalStates);
                     }
                 }
 
@@ -496,9 +494,9 @@ namespace Nullaby
 
             private void VisitLogicalNot(PrefixUnaryExpressionSyntax node)
             {
-                var initialStates = this.states;
+                var initialStates = this.lexicalStates;
                 this.Visit(node.Operand);
-                this.states = NegateChanges(initialStates, this.states);
+                this.lexicalStates = NegateChanges(initialStates, this.lexicalStates);
             }
 
             public override void VisitBinaryExpression(BinaryExpressionSyntax node)
@@ -522,18 +520,18 @@ namespace Nullaby
 
             private void VisitLogicalOr(BinaryExpressionSyntax binop)
             {
-                var initialStates = this.states;
+                var initialStates = this.lexicalStates;
                 this.Visit(binop.Left);
 
-                var leftBranch = this.states;
+                var leftBranch = this.lexicalStates;
 
                 // right evaluation starts with negation of left-side changes because
                 // right side only executes if left side is false.
-                this.states = NegateChanges(initialStates, leftBranch);
+                this.lexicalStates = NegateChanges(initialStates, leftBranch);
                 this.Visit(binop.Right);
-                var rightBranch = this.states;
+                var rightBranch = this.lexicalStates;
 
-                this.states = Join(initialStates, leftBranch, rightBranch);
+                this.lexicalStates = Join(leftBranch, rightBranch);
             }
 
             private void VisitEquality(BinaryExpressionSyntax binop)
@@ -542,16 +540,13 @@ namespace Nullaby
 
                 ExpressionSyntax influencedExpr = null;
 
-                var leftState = GetNullState(binop.Left);
-                var rightState = GetNullState(binop.Right);
-
-                if (IsKnownToBeNull(leftState) && !IsKnownToBeNull(rightState))
-                {
-                    influencedExpr = binop.Right;
-                }
-                else if (IsKnownToBeNull(rightState) && !IsKnownToBeNull(leftState))
+                if (binop.Right.IsKind(SyntaxKind.NullLiteralExpression))
                 {
                     influencedExpr = binop.Left;
+                }
+                else if (binop.Left.IsKind(SyntaxKind.NullLiteralExpression))
+                {
+                    influencedExpr = binop.Right;
                 }
 
                 if (influencedExpr != null)
@@ -561,11 +556,11 @@ namespace Nullaby
                     switch (binop.Kind())
                     {
                         case SyntaxKind.EqualsExpression:
-                            this.SetNullState(influencedExpr, NullState.TestedNull);
+                            this.SetNullState(influencedExpr, NullState.Null);
                             break;
 
                         case SyntaxKind.NotEqualsExpression:
-                            this.SetNullState(influencedExpr, NullState.TestedNotNull);
+                            this.SetNullState(influencedExpr, NullState.NotNull);
                             break;
                     }
                 }
@@ -573,14 +568,7 @@ namespace Nullaby
 
             private static bool IsKnownToBeNull(NullState state)
             {
-                switch (state)
-                {
-                    case NullState.Null:
-                    case NullState.TestedNull:
-                        return true;
-                    default:
-                        return false;
-                }
+                return state == NullState.Null;
             }
 
             private void SetNullState(ExpressionSyntax expr, NullState state)
@@ -588,7 +576,7 @@ namespace Nullaby
                 expr = GetTrackableExpression(expr);
                 if (expr != null)
                 {
-                    this.states = this.states.SetItem(expr, state);
+                    this.lexicalStates = this.lexicalStates.SetItem(expr, state);
                 }
             }
 
@@ -638,7 +626,7 @@ namespace Nullaby
                     case SymbolKind.Local:
                     case SymbolKind.Parameter:
                     case SymbolKind.RangeVariable:
-                        this.states = this.states.SetItem(symbol, state);
+                        this.lexicalStates = this.lexicalStates.SetItem(symbol, state);
                         break;
                 }
             }
@@ -650,7 +638,7 @@ namespace Nullaby
                     expression = WithoutParens(expression);
 
                     NullState state;
-                    if (this.states.TryGetValue(expression, out state))
+                    if (this.lexicalStates.TryGetValue(expression, out state))
                     {
                         return state;
                     }
@@ -697,7 +685,7 @@ namespace Nullaby
             private NullState GetNullState(ISymbol symbol)
             {
                 NullState state;
-                if (states.TryGetValue(symbol, out state))
+                if (lexicalStates.TryGetValue(symbol, out state))
                 {
                     return state;
                 }
@@ -798,10 +786,6 @@ namespace Nullaby
                         return NullState.ShouldNotBeNull;
                     case NullState.ShouldNotBeNull:
                         return NullState.CouldBeNull;
-                    case NullState.TestedNull:
-                        return NullState.TestedNotNull;
-                    case NullState.TestedNotNull:
-                        return NullState.TestedNull;
                     default:
                         return NullState.Unknown;
                 }
@@ -834,34 +818,18 @@ namespace Nullaby
             /// If a state on both branches in the same, then that is the final state.
             /// If a state on one of the branches is possibly null, then the resulting state is CouldBeNull.
             /// If a state on one side is ShouldNotBeNull and the other is any other not-null state, the joined state is ShouldNotBeNull.
-            /// Tested states are promoted to absolute states, unless they counter each other, and then the original state prevails.
             /// </remarks>
             private ImmutableDictionary<object, NullState> Join(
-                ImmutableDictionary<object, NullState> original, 
                 ImmutableDictionary<object, NullState> branchA, 
                 ImmutableDictionary<object, NullState> branchB)
             {
-                var joined = original;
-                Join(original, branchA, branchB, ref joined);
-                Join(original, branchB, branchA, ref joined);
-                return RealizeChanges(original, joined);
-            }
-
-            private ImmutableDictionary<object, NullState> Join(
-                ImmutableDictionary<object, NullState> original,
-                ImmutableList<ImmutableDictionary<object, NullState>> branches)
-            {
-                var joined = branches[0];
-                for (int i = 1; i < branches.Count; i++)
-                {
-                    joined = Join(original, joined, branches[i]);
-                }
-
+                var joined = branchA;
+                Join(branchA, branchB, ref joined);
+                Join(branchB, branchA, ref joined);
                 return joined;
             }
 
             private void Join(
-                ImmutableDictionary<object, NullState> original,
                 ImmutableDictionary<object, NullState> branchA, 
                 ImmutableDictionary<object, NullState> branchB, 
                 ref ImmutableDictionary<object, NullState> joined)
@@ -870,20 +838,12 @@ namespace Nullaby
                 foreach (var kvp in branchA)
                 {
                     NullState bs;
-                    if (!branchB.TryGetValue(kvp.Key, out bs)
-                        && !original.TryGetValue(kvp.Key, out bs))
+                    if (!branchB.TryGetValue(kvp.Key, out bs))
                     {
                         bs = GetDeclaredNullState(kvp.Key);
                     }
 
                     var w = Join(kvp.Value, bs);
-
-                    // any unknown result means to keep the original state
-                    if (w == NullState.Unknown
-                        && !original.TryGetValue(kvp.Key, out w))
-                    {
-                        w = GetDeclaredNullState(kvp.Key);
-                    }
 
                     joined = joined.SetItem(kvp.Key, w);
                 }
@@ -898,11 +858,9 @@ namespace Nullaby
                         {
                             case NullState.Unknown:
                             case NullState.NotNull:
-                            case NullState.TestedNotNull:
                             case NullState.ShouldNotBeNull:
                                 return NullState.Unknown;
                             case NullState.Null:
-                            case NullState.TestedNull:
                             case NullState.CouldBeNull:
                                 return NullState.CouldBeNull;
                         }
@@ -916,7 +874,6 @@ namespace Nullaby
                         {
                             case NullState.ShouldNotBeNull:
                             case NullState.NotNull:
-                            case NullState.TestedNotNull:
                                 return NullState.ShouldNotBeNull;
 
                             case NullState.Unknown:
@@ -924,7 +881,6 @@ namespace Nullaby
 
                             case NullState.CouldBeNull:
                             case NullState.Null:
-                            case NullState.TestedNull:
                                 return NullState.CouldBeNull;
                         }
                         break;
@@ -936,11 +892,9 @@ namespace Nullaby
                             case NullState.CouldBeNull:
                             case NullState.ShouldNotBeNull:
                             case NullState.NotNull:
-                            case NullState.TestedNotNull:
                                 return NullState.CouldBeNull;
 
                             case NullState.Null:
-                            case NullState.TestedNull:
                                 return NullState.Null;
                         }
                         break;
@@ -953,82 +907,15 @@ namespace Nullaby
                             case NullState.ShouldNotBeNull:
                                 return NullState.ShouldNotBeNull;
                             case NullState.NotNull:
-                            case NullState.TestedNotNull:
-                                return NullState.NotNull;
-                            case NullState.CouldBeNull:
-                            case NullState.Null:
-                            case NullState.TestedNull:
-                                return NullState.CouldBeNull;
-                        }
-                        break;
-
-                    case NullState.TestedNull:
-                        switch (b)
-                        {
-                            case NullState.TestedNotNull:
-                                return NullState.Unknown;
-
-                            case NullState.Unknown:
-                            case NullState.CouldBeNull:
-                            case NullState.ShouldNotBeNull:
-                            case NullState.NotNull:
-                                return NullState.CouldBeNull;
-
-                            case NullState.Null:
-                            case NullState.TestedNull:
-                                return NullState.Null;
-                        }
-                        break;
-
-                    case NullState.TestedNotNull:
-                        switch (b)
-                        {
-                            case NullState.Unknown:
-                                return NullState.Unknown;
-                            case NullState.ShouldNotBeNull:
-                                return NullState.ShouldNotBeNull;
-                            case NullState.NotNull:
-                            case NullState.TestedNotNull:
                                 return NullState.NotNull;
                             case NullState.CouldBeNull:
                             case NullState.Null:
                                 return NullState.CouldBeNull;
-                            case NullState.TestedNull:
-                                return NullState.Unknown;
                         }
                         break;
                 }
 
                 return NullState.Unknown;
-            }
-
-            /// <summary>
-            /// Converts tested states into aboslute states (if they differ from original)
-            /// </summary>
-            private ImmutableDictionary<object, NullState> RealizeChanges(
-                ImmutableDictionary<object, NullState> original,
-                ImmutableDictionary<object, NullState> changed)
-            {
-                var realized = changed;
-
-                foreach (var kvp in changed)
-                {
-                    NullState os;
-                    if (!original.TryGetValue(kvp.Key, out os) || os != kvp.Value)
-                    {
-                        switch (kvp.Value)
-                        {
-                            case NullState.TestedNull:
-                                realized = realized.SetItem(kvp.Key, NullState.Null);
-                                break;
-                            case NullState.TestedNotNull:
-                                realized = realized.SetItem(kvp.Key, NullState.NotNull);
-                                break;
-                        }
-                    }
-                }
-
-                return realized;
             }
 
             private class VariableComparer : IEqualityComparer<object>
