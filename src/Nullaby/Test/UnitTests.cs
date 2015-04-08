@@ -31,7 +31,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullDeferenceId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullDeferenceId, dx[0].Id);
         }
 
         [TestMethod]
@@ -96,7 +96,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullDeferenceId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullDeferenceId, dx[0].Id);
         }
 
         [TestMethod]
@@ -198,7 +198,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullDeferenceId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullDeferenceId, dx[0].Id);
         }
 
         [TestMethod]
@@ -308,7 +308,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullDeferenceId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullDeferenceId, dx[0].Id);
         }
 
         [TestMethod]
@@ -328,7 +328,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullAssignmentId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullAssignmentId, dx[0].Id);
         }
 
         [TestMethod]
@@ -352,7 +352,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullAssignmentId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullAssignmentId, dx[0].Id);
         }
 
         [TestMethod]
@@ -522,7 +522,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullAssignmentId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullAssignmentId, dx[0].Id);
         }
 
         [TestMethod]
@@ -970,7 +970,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullDeferenceId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullDeferenceId, dx[0].Id);
         }
 
         [TestMethod]
@@ -1017,7 +1017,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullDeferenceId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullDeferenceId, dx[0].Id);
         }
 
         [TestMethod]
@@ -1080,7 +1080,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullAssignmentId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullAssignmentId, dx[0].Id);
         }
 
         [TestMethod]
@@ -1095,7 +1095,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullAssignmentId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullAssignmentId, dx[0].Id);
         }
 
         [TestMethod]
@@ -1157,7 +1157,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullAssignmentId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullAssignmentId, dx[0].Id);
         }
 
         [TestMethod]
@@ -1173,7 +1173,7 @@ public class C
 ";
             var dx = GetAnalyzerDiagnostics(code);
             Assert.AreEqual(1, dx.Length);
-            Assert.AreEqual(NullAnalyzer.NullAssignmentId, dx[0].Id);
+            Assert.AreEqual(NullAnalyzer.PossibleNullAssignmentId, dx[0].Id);
         }
 
         protected Diagnostic[] GetAnalyzerDiagnostics(string code)

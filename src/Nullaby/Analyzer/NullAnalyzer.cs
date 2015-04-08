@@ -13,34 +13,14 @@ namespace Nullaby
     [DiagnosticAnalyzer(LanguageNames.CSharp)]
     public class NullAnalyzer : DiagnosticAnalyzer
     {
-        public const string NullDeferenceId = "NN0001";
-        public const string PossibleNullDeferenceId = "NN0002";
-        public const string NullAssignmentId = "NN0003";
-        public const string PossibleNullAssignmentId = "NN0004";
-
-        internal static DiagnosticDescriptor NullDeference =
-            new DiagnosticDescriptor(
-                id: NullDeferenceId,
-                title: "Null dereference",
-                messageFormat: "Dereference of null value",
-                category: "Nulls",
-                defaultSeverity: DiagnosticSeverity.Warning,
-                isEnabledByDefault: true);
+        public const string PossibleNullDeferenceId = "NN0001";
+        public const string PossibleNullAssignmentId = "NN0002";
 
         internal static DiagnosticDescriptor PossibleNullDereference =
             new DiagnosticDescriptor(
                 id: PossibleNullDeferenceId,
                 title: "Possible null deference",
                 messageFormat: "Possible dereference of null value",
-                category: "Nulls",
-                defaultSeverity: DiagnosticSeverity.Warning,
-                isEnabledByDefault: true);
-
-        internal static DiagnosticDescriptor NullAssignment =
-           new DiagnosticDescriptor(
-                id: NullAssignmentId,
-                title: "Null assignment",
-                messageFormat: "Assignment of null to variable that should not be null",
                 category: "Nulls",
                 defaultSeverity: DiagnosticSeverity.Warning,
                 isEnabledByDefault: true);
@@ -55,7 +35,7 @@ namespace Nullaby
                 isEnabledByDefault: true);
 
         private static readonly ImmutableArray<DiagnosticDescriptor> s_supported =
-            ImmutableArray.Create(NullDeference, PossibleNullDereference, NullAssignment, PossibleNullAssignment);
+            ImmutableArray.Create(PossibleNullDereference, PossibleNullAssignment);
 
         public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
         {
@@ -229,8 +209,6 @@ namespace Nullaby
                     switch (GetNullState(node.Expression))
                     {
                         case NullState.Null:
-                            context.ReportDiagnostic(Diagnostic.Create(NullDeference, node.Name.GetLocation()));
-                            break;
                         case NullState.CouldBeNull:
                             context.ReportDiagnostic(Diagnostic.Create(PossibleNullDereference, node.Name.GetLocation()));
                             break;
@@ -265,9 +243,6 @@ namespace Nullaby
                     switch (expressionState)
                     {
                         case NullState.Null:
-                            context.ReportDiagnostic(Diagnostic.Create(NullAssignment, expression.GetLocation()));
-                            break;
-
                         case NullState.CouldBeNull:
                             context.ReportDiagnostic(Diagnostic.Create(PossibleNullAssignment, expression.GetLocation()));
                             break;
