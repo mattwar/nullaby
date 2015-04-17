@@ -2,11 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+
+[assembly: ShouldNotBeNull]
 
 namespace Nullaby
 {
@@ -19,7 +22,7 @@ namespace Nullaby
         internal static DiagnosticDescriptor PossibleNullDereference =
             new DiagnosticDescriptor(
                 id: PossibleNullDeferenceId,
-                title: "Possible null deference",
+                title: "Possible null dereference",
                 messageFormat: "Possible dereference of null value",
                 category: "Nulls",
                 defaultSeverity: DiagnosticSeverity.Warning,
@@ -29,7 +32,7 @@ namespace Nullaby
            new DiagnosticDescriptor(
                 id: PossibleNullAssignmentId,
                 title: "Possible null assignment",
-                messageFormat: "Possible assignment of null to variable that should not be null.",
+                messageFormat: "Possible assignment of null value to variable or parameter that should not be null.",
                 category: "Nulls",
                 defaultSeverity: DiagnosticSeverity.Warning,
                 isEnabledByDefault: true);
@@ -75,7 +78,6 @@ namespace Nullaby
 
             // true if the analzyer should report diagnostics on the current pass
             private bool reportDiagnostics;
-
 
             private enum NullState
             {
@@ -193,7 +195,7 @@ namespace Nullaby
                     var symbol = context.SemanticModel.GetDeclaredSymbol(node);
                     if (symbol != null)
                     {
-                        CheckAssignment(symbol, node.Default.Value);
+                        CheckAssignment(symbol, node.Default.Value, isInvocationParameter: true);
                     }
                 }
 
@@ -206,7 +208,7 @@ namespace Nullaby
 
                 if (reportDiagnostics)
                 {
-                    switch (GetNullState(node.Expression))
+                    switch (GetReferenceState(node.Expression))
                     {
                         case NullState.Null:
                         case NullState.CouldBeNull:
@@ -224,16 +226,16 @@ namespace Nullaby
 
             private void CheckAssignment(ExpressionSyntax variable, ExpressionSyntax expression)
             {
-                var exprState = GetNullState(expression);
-                CheckAssignment(GetDeclaredNullState(variable), exprState, expression);
-                SetNullState(variable, exprState);
+                var exprState = GetReferenceState(expression);
+                CheckAssignment(GetAssignmentState(variable), exprState, expression);
+                SetVariableState(variable, exprState);
             }
 
-            private void CheckAssignment(ISymbol symbol, ExpressionSyntax expression)
+            private void CheckAssignment(ISymbol symbol, ExpressionSyntax expression, bool isInvocationParameter = false)
             {
-                var exprState = GetNullState(expression);
-                CheckAssignment(GetDeclaredNullState(symbol), exprState, expression);
-                SetNullState(symbol, exprState);
+                var exprState = GetReferenceState(expression);
+                CheckAssignment(GetAssignmentState(symbol, isInvocationParameter), exprState, expression);
+                SetVariableState(symbol, exprState);
             }
 
             private void CheckAssignment(NullState variableState, NullState expressionState, ExpressionSyntax expression)
@@ -302,9 +304,9 @@ namespace Nullaby
                 // check parameter assignments from arguments
                 if (reportDiagnostics && arguments.Count <= parameters.Length)
                 {
-                    for (int i = 0; i < parameters.Length; i++)
+                    for (int i = 0; i < arguments.Count; i++)
                     {
-                        CheckAssignment(parameters[i], arguments[i].Expression);
+                        CheckAssignment(parameters[i], arguments[i].Expression, isInvocationParameter: true);
                     }
                 }
             }
@@ -321,8 +323,8 @@ namespace Nullaby
                         var symbol = context.SemanticModel.GetDeclaredSymbol(v);
                         if (symbol != null)
                         {
-                            var state = GetNullState(v.Initializer.Value);
-                            SetNullState(symbol, state);
+                            var state = GetReferenceState(v.Initializer.Value);
+                            SetVariableState(symbol, state);
                         }
                     }
                 }
@@ -401,7 +403,7 @@ namespace Nullaby
 
                 // combine all exit states together
                 // note: don't join if no exit states yet, since empty won't include the loop/branch condition, etc.
-                this.exitStates = this.exitStates == this.empty 
+                this.exitStates = this.exitStates == this.empty
                     ? this.lexicalStates
                     : Join(this.exitStates, this.lexicalStates);
             }
@@ -422,7 +424,7 @@ namespace Nullaby
             public override void VisitGotoStatement(GotoStatementSyntax node)
             {
                 // join current lexical state to label's external branch states
-                if (node.CaseOrDefaultKeyword == default(SyntaxToken) 
+                if (node.CaseOrDefaultKeyword == default(SyntaxToken)
                     && node.Expression.IsKind(SyntaxKind.IdentifierName))
                 {
                     var labelName = ((IdentifierNameSyntax)node.Expression).Identifier.ValueText;
@@ -531,24 +533,63 @@ namespace Nullaby
                     switch (binop.Kind())
                     {
                         case SyntaxKind.EqualsExpression:
-                            this.SetNullState(influencedExpr, NullState.Null);
+                            this.SetVariableState(influencedExpr, NullState.Null);
                             break;
 
                         case SyntaxKind.NotEqualsExpression:
-                            this.SetNullState(influencedExpr, NullState.NotNull);
+                            this.SetVariableState(influencedExpr, NullState.NotNull);
                             break;
                     }
                 }
             }
 
-            private static bool IsKnownToBeNull(NullState state)
+            private ExpressionSyntax WithoutParens(ExpressionSyntax expr)
             {
-                return state == NullState.Null;
+                while (expr.IsKind(SyntaxKind.ParenthesizedExpression))
+                {
+                    expr = ((ParenthesizedExpressionSyntax)expr).Expression;
+                }
+
+                return expr;
             }
 
-            private void SetNullState(ExpressionSyntax expr, NullState state)
+            private NullState GetAssignmentState(ExpressionSyntax variable, bool isInvocationParameter = false)
             {
-                expr = GetTrackableExpression(expr);
+                var symbol = context.SemanticModel.GetSymbolInfo(variable).Symbol;
+                if (symbol != null)
+                {
+                    return GetAssignmentState(symbol, isInvocationParameter);
+                }
+                else
+                {
+                    return NullState.Unknown;
+                }
+            }
+
+            private NullState GetAssignmentState(ISymbol symbol, bool isInvocationParameter = false)
+            {
+                switch (symbol.Kind)
+                {
+                    case SymbolKind.Local:
+                        return NullState.Unknown;
+                    case SymbolKind.Parameter:
+                        if (!isInvocationParameter)
+                        {
+                            // method body parameters get their state assigned just like locals
+                            return NullState.Unknown;
+                        }
+                        else
+                        {
+                            goto default;
+                        }
+                    default:
+                        return GetDeclaredState(symbol);
+                }
+            }
+
+            private void SetVariableState(ExpressionSyntax expr, NullState state)
+            {
+                expr = GetVariableExpression(expr);
                 if (expr != null)
                 {
                     this.lexicalStates = this.lexicalStates.SetItem(expr, state);
@@ -559,7 +600,8 @@ namespace Nullaby
             /// Returns the portion of the expression that represents the variable
             /// that can be tracked, or null if the expression is not trackable.
             /// </summary>
-            private ExpressionSyntax GetTrackableExpression(ExpressionSyntax expr)
+            [return: CouldBeNull]
+            private ExpressionSyntax GetVariableExpression(ExpressionSyntax expr)
             {
                 expr = WithoutParens(expr);
 
@@ -569,7 +611,7 @@ namespace Nullaby
                     // this comes into play during null checks: (x = y) != null
                     // in this case x can be assigned tested-not-null state.. (what about y?)
                     case SyntaxKind.SimpleAssignmentExpression:
-                        return GetTrackableExpression(((BinaryExpressionSyntax)expr).Left);
+                        return GetVariableExpression(((BinaryExpressionSyntax)expr).Left);
 
                     // all dotted names are trackable.
                     case SyntaxKind.SimpleMemberAccessExpression:
@@ -584,17 +626,7 @@ namespace Nullaby
                 }
             }
 
-            private ExpressionSyntax WithoutParens(ExpressionSyntax expr)
-            {
-                while (expr.IsKind(SyntaxKind.ParenthesizedExpression))
-                {
-                    expr = ((ParenthesizedExpressionSyntax)expr).Expression;
-                }
-
-                return expr;
-            }
-
-            private void SetNullState(ISymbol symbol, NullState state)
+            private void SetVariableState(ISymbol symbol, NullState state)
             {
                 switch (symbol.Kind)
                 {
@@ -606,7 +638,7 @@ namespace Nullaby
                 }
             }
 
-            private NullState GetNullState(ExpressionSyntax expression)
+            private NullState GetReferenceState(ExpressionSyntax expression)
             {
                 if (expression != null)
                 {
@@ -630,8 +662,8 @@ namespace Nullaby
 
                         case SyntaxKind.ConditionalAccessExpression:
                             var ca = (ConditionalAccessExpressionSyntax)expression;
-                            var exprState = GetNullState(ca.Expression);
-                            switch (GetNullState(ca.Expression))
+                            var exprState = GetReferenceState(ca.Expression);
+                            switch (GetReferenceState(ca.Expression))
                             {
                                 case NullState.Null:
                                     return NullState.Null;
@@ -639,25 +671,25 @@ namespace Nullaby
                                 case NullState.Unknown:
                                     return NullState.CouldBeNull;
                                 default:
-                                    return GetDeclaredNullState(ca.WhenNotNull);
+                                    return GetDeclaredState(ca.WhenNotNull);
                             }
 
                         case SyntaxKind.CoalesceExpression:
                             var co = (BinaryExpressionSyntax)expression;
-                            return GetNullState(co.Right);
+                            return GetReferenceState(co.Right);
                     }
 
                     var symbol = context.SemanticModel.GetSymbolInfo(expression).Symbol;
                     if (symbol != null)
                     {
-                        return GetNullState(symbol);
+                        return GetReferenceState(symbol);
                     }
                 }
 
                 return NullState.Unknown;
             }
 
-            private NullState GetNullState(ISymbol symbol)
+            private NullState GetReferenceState(ISymbol symbol)
             {
                 NullState state;
                 if (lexicalStates.TryGetValue(symbol, out state))
@@ -665,32 +697,32 @@ namespace Nullaby
                     return state;
                 }
 
-                return GetDeclaredNullState(symbol);
+                return GetDeclaredState(symbol);
             }
 
-            private NullState GetDeclaredNullState(object symbolOrSyntax)
+            private NullState GetDeclaredState(object symbolOrSyntax)
             {
                 var syntax = symbolOrSyntax as ExpressionSyntax;
                 if (syntax != null)
                 {
-                    return GetDeclaredNullState(syntax);
+                    return GetDeclaredState(syntax);
                 }
 
                 var symbol = symbolOrSyntax as ISymbol;
                 if (symbol != null)
                 {
-                    return GetDeclaredNullState(symbol);
+                    return GetDeclaredState(symbol);
                 }
 
                 return NullState.Unknown;
             }
 
-            private NullState GetDeclaredNullState(ExpressionSyntax syntax)
+            private NullState GetDeclaredState(ExpressionSyntax syntax)
             {
                 var symbol = context.SemanticModel.GetSymbolInfo(syntax).Symbol;
                 if (symbol != null)
                 {
-                    return GetDeclaredNullState(symbol);
+                    return GetDeclaredState(symbol);
                 }
                 else
                 {
@@ -698,10 +730,80 @@ namespace Nullaby
                 }
             }
 
-            private static NullState GetDeclaredNullState(ISymbol symbol)
+            private static NullState GetDeclaredState(ISymbol symbol)
             {
-                ImmutableArray<AttributeData> attrs;
+                switch (symbol.Kind)
+                {
+                    case SymbolKind.Local:
+                        return NullState.Unknown;
 
+                    default:
+                        return GetSymbolInfo(symbol).NullState;
+                }
+            }
+
+            private static bool TryGetAttributedState(ImmutableArray<AttributeData> attrs, out NullState state)
+            {
+                foreach (var a in attrs)
+                {
+                    if (a.AttributeClass.Name == "ShouldNotBeNullAttribute")
+                    {
+                        state = NullState.ShouldNotBeNull;
+                        return true;
+                    }
+                    else if (a.AttributeClass.Name == "CouldBeNullAttribute")
+                    {
+                        state = NullState.CouldBeNull;
+                        return true;
+                    }
+                }
+
+                state = NullState.Unknown;
+                return false;
+
+            }
+
+            private class SymbolInfo
+            {
+                public readonly NullState NullState;
+
+                public SymbolInfo(NullState defaultState)
+                {
+                    this.NullState = defaultState;
+                }
+            }
+
+            private static ConditionalWeakTable<ISymbol, SymbolInfo> symbolInfos
+                = new ConditionalWeakTable<ISymbol, SymbolInfo>();
+
+            private static SymbolInfo GetSymbolInfo(ISymbol symbol)
+            {
+                SymbolInfo info;
+                if (!symbolInfos.TryGetValue(symbol, out info))
+                {
+                    info = CreateSymbolInfo(symbol);
+                    info = symbolInfos.GetValue(symbol, _ => info);
+                }
+
+                return info;
+            }
+
+            private static SymbolInfo CreateSymbolInfo(ISymbol symbol)
+            {
+                // check if it can possibly be null
+                var type = GetVariableType(symbol);
+                if (type != null)
+                {
+                    var possibleToBeNull = type.IsReferenceType 
+                        || type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T;
+                    if (!possibleToBeNull)
+                    {
+                        return new SymbolInfo(NullState.NotNull);
+                    }
+                }
+
+                // check any explicit attributes
+                ImmutableArray<AttributeData> attrs;
                 switch (symbol.Kind)
                 {
                     case SymbolKind.Method:
@@ -713,19 +815,52 @@ namespace Nullaby
                         break;
                 }
 
-                foreach (var a in attrs)
+                NullState state;
+                if (!TryGetAttributedState(attrs, out state))
                 {
-                    if (a.AttributeClass.Name == "ShouldNotBeNullAttribute")
+                    // if defaulted to null, then obviously it could be null!
+                    if (symbol.Kind == SymbolKind.Parameter)
                     {
-                        return NullState.ShouldNotBeNull;
+                        var ps = (IParameterSymbol)symbol;
+                        if (ps.HasExplicitDefaultValue && ps.ExplicitDefaultValue == null)
+                        {
+                            return new SymbolInfo(NullState.CouldBeNull);
+                        }
                     }
-                    else if (a.AttributeClass.Name == "CouldBeNullAttribute")
+
+                    // otherwise try to pickup default from assembly level attribute
+                    if (symbol.Kind != SymbolKind.Assembly)
                     {
-                        return NullState.CouldBeNull;
+                        state = GetSymbolInfo(symbol.ContainingAssembly).NullState;
                     }
                 }
 
-                return NullState.Unknown;
+                return new SymbolInfo(state);
+            }
+
+            [return: CouldBeNull]
+            private static ITypeSymbol GetVariableType(ISymbol symbol)
+            {
+                switch (symbol.Kind)
+                {
+                    case SymbolKind.Parameter:
+                        return ((IParameterSymbol)symbol).Type;
+
+                    case SymbolKind.Local:
+                        return ((ILocalSymbol)symbol).Type;
+
+                    case SymbolKind.Field:
+                        return ((IFieldSymbol)symbol).Type;
+
+                    case SymbolKind.Property:
+                        return ((IPropertySymbol)symbol).Type;
+
+                    case SymbolKind.Method:
+                        return ((IMethodSymbol)symbol).ReturnType;
+
+                    default:
+                        return null;
+                }
             }
 
             /// <summary>
@@ -815,7 +950,7 @@ namespace Nullaby
                     NullState bs;
                     if (!branchB.TryGetValue(kvp.Key, out bs))
                     {
-                        bs = GetDeclaredNullState(kvp.Key);
+                        bs = GetDeclaredState(kvp.Key);
                     }
 
                     var w = Join(kvp.Value, bs);
