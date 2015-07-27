@@ -45,13 +45,7 @@ namespace Nullaby
 
         public override void Initialize(AnalysisContext context)
         {
-            //context.RegisterCodeBlockAction(AnalyzeCodeBlock);
-            context.RegisterCodeBlockStartAction<SyntaxKind>(Start);
-        }
-
-        private static void Start(CodeBlockStartAnalysisContext<SyntaxKind> context)
-        {
-            context.RegisterCodeBlockEndAction(AnalyzeCodeBlock);
+            context.RegisterCodeBlockAction(AnalyzeCodeBlock);
         }
 
         private static void AnalyzeCodeBlock(CodeBlockAnalysisContext context)
