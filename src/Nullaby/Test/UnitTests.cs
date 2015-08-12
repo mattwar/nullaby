@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis.CodeFixes;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Linq;
 using TestHelper;
 using Nullaby;
 
@@ -129,7 +130,7 @@ public class C
 
   public void M()
   {
-     var = y = x.Length;
+     var y = x.Length;
   }
 }
 ";
@@ -411,7 +412,7 @@ public class C
     x = GetIt();
   }
 
-  [return: NotNull]
+  [return: ShouldNotBeNull]
   public string GetIt() { return ""string""; }
 }
 ";
@@ -555,7 +556,7 @@ public class C
 {
   string x;
   
-  [return: NotNull]
+  [return: ShouldNotBeNull]
   public string M()
   {
     return x;
@@ -573,12 +574,12 @@ public class C
 @"
 public class C
 {
-  [return: NotNull]
+  [return: ShouldNotBeNull]
   public int M([CouldBeNull] string x)
   {
     if (x == null)
     {
-        throw new ArgumentNullException(nameof(x));
+        throw new System.ArgumentNullException(nameof(x));
     }
 
     return x.Length;
@@ -902,16 +903,16 @@ public class C
 @"
 public class C
 {
-  public C C;
+  public C CC;
 
   [CouldBeNull]
   public string F;
 
   public void M()
   {
-    if (C.F != null)
+    if (CC.F != null)
     {
-        var y = C.F.Length;
+        var y = CC.F.Length;
     }
   }
 }
@@ -927,7 +928,7 @@ public class C
 @"
 public class C
 {
-  public C C;
+  public C CC;
   public C[] A;
 
   [CouldBeNull]
@@ -935,9 +936,9 @@ public class C
 
   public void M()
   {
-    if (C.A[0].F != null)
+    if (CC.A[0].F != null)
     {
-        var y = C.A[0].F.Length;
+        var y = CC.A[0].F.Length;
     }
   }
 }
@@ -953,7 +954,7 @@ public class C
 @"
 public class C
 {
-  public C C;
+  public C CC;
   public C[] A;
 
   [CouldBeNull]
@@ -961,9 +962,9 @@ public class C
 
   public void M()
   {
-    if (C.A[0].F == null)
+    if (CC.A[0].F == null)
     {
-        var y = C.A[0].F.Length;
+        var y = CC.A[0].F.Length;
     }
   }
 }
@@ -1027,7 +1028,7 @@ public class C
 @"
 public class C
 {
-  public C C;
+  public C CC;
   public string F;
 
   [ShouldNotBeNull]
@@ -1035,7 +1036,7 @@ public class C
 
   public void M()
   {
-    X = C?.F.Length;
+    X = CC?.F.Length;
   }
 }
 ";
@@ -1184,6 +1185,11 @@ public class ShouldNotBeNullAttribute : System.Attribute { }
 ";
             var document = CreateDocument(code, LanguageNames.CSharp);
             var analyzer = new NullAnalyzer();
+
+            var compilerDiagnostics = document.Project.GetCompilationAsync().Result.GetDiagnostics();
+            bool hasCompileErrors = compilerDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
+            Assert.AreEqual(hasCompileErrors, false, "Compilation error(s)");
+
             return GetSortedDiagnosticsFromDocuments(analyzer, new[] { document });
         }
 
